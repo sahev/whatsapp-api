@@ -1,0 +1,233 @@
+import { Injectable } from '@nestjs/common';
+import { rmSync, readdir } from 'fs'
+import path, { join } from 'path'
+import pino from 'pino'
+import makeWASocket, {
+  makeWALegacySocket,
+  useMultiFileAuthState,
+  makeInMemoryStore,
+  Browsers,
+  DisconnectReason,
+  delay,
+  AnyWASocket,
+  AnyMessageContent,
+  WASocket,
+} from '@adiwajshing/baileys'
+import { toDataURL } from 'qrcode'
+import response from './response';
+import { Boom } from '@hapi/boom'
+import { SessionWebSocket } from 'src/infra/websockets/session.ws';
+import { MessageWebSocket } from 'src/infra/websockets/message.ws';
+
+const sessions = new Map()
+const retries = new Map()
+
+@Injectable()
+export class WhatsAppService {
+
+  constructor(
+      private readonly sessionWebSocket: SessionWebSocket,
+      private readonly messageWebSocket: MessageWebSocket,
+    ) { }
+
+  sessionsDir(sessionId = '') {
+    return join(__dirname, 'tokens', sessionId ? sessionId : '')
+  }
+
+  isSessionExists(sessionId: any) {
+    return sessions.has(sessionId)
+  }
+
+  shouldReconnect(sessionId: string) {
+    let maxRetries = process.env.MAX_RETRIES ?? 0;
+    let attempts = retries.get(sessionId) ?? 0
+
+    maxRetries = maxRetries < 1 ? 1 : maxRetries
+
+    if (attempts < maxRetries) {
+      ++attempts
+
+      console.log('Reconnecting...', { attempts, sessionId })
+      retries.set(sessionId, attempts)
+
+      return true
+    }
+
+    return false
+  }
+
+  async createSession(sessionId: string, isLegacy = false, res = null) {
+    const sessionFile = (isLegacy ? 'legacy_' : 'md_') + sessionId + (isLegacy ? '.json' : '')
+
+    const logger = pino({ level: 'silent' })
+    const store = makeInMemoryStore({ logger })
+    
+    const { state, saveCreds } = await useMultiFileAuthState(this.sessionsDir(sessionFile))
+
+    const waConfig = {
+      auth: state,
+      logger,
+    }
+
+    const wa: AnyWASocket = makeWASocket(waConfig)
+
+    if (!isLegacy) {
+      store.readFromFile(this.sessionsDir(`${sessionId}_store.json`))
+      store.bind(wa.ev)
+    }
+
+    sessions.set(sessionId, { ...wa, store, isLegacy })
+
+    wa.ev.on('creds.update', saveCreds)
+
+    wa.ev.on('chats.set', ({ chats }) => {
+      if (isLegacy) {
+        store.chats.insertIfAbsent(...chats)
+      }
+    })
+
+    wa.ev.on('connection.update', async (update) => {
+      const { connection, lastDisconnect } = update
+      
+      if (connection === 'close') {
+        const shouldReconnect = (lastDisconnect.error as Boom)?.output?.statusCode !== DisconnectReason.loggedOut &&
+          (lastDisconnect.error as Boom)?.output?.statusCode !== DisconnectReason.connectionReplaced;
+          this.sessionWebSocket.emitSessionStatus({ connection: "disconnected" });
+          
+        if (shouldReconnect) {
+          this.createSession(sessionId, false, null)
+          this.sessionWebSocket.emitSessionStatus({ connection: "reconnecting" });
+        } else {
+          this.sessionWebSocket.emitSessionStatus({ connection: "reconnect" });
+          this.deleteSession(sessionId);
+        }
+        
+      } else if (connection === 'open') {
+        this.sessionWebSocket.emitSessionStatus({ connection: "connected" });
+      }
+      
+      if (update.qr) {
+        this.sessionWebSocket.emitSessionStatus({connection: "waiting"});
+        this.sessionWebSocket.emitQrCodeEvent(await toDataURL(update.qr));
+      }
+    })
+
+
+    wa.ev.on('messages.upsert', async (m) => {
+        const message = m.messages[0]
+        if (m.type === 'notify') {
+          this.messageWebSocket.emitOnMessage(message);
+            await delay(1000)
+            if (!isLegacy) {
+              await wa.sendReadReceipt(message.key.remoteJid, message.key.participant, [message.key.id])
+            }
+            
+        }
+    })
+
+  }
+
+  getSession(sessionId: AnyWASocket | null) {
+    return sessions.get(sessionId) ?? null
+  }
+
+  deleteSession(sessionId: string, isLegacy = false) {
+    const sessionFile = (isLegacy ? 'legacy_' : 'md_') + sessionId + (isLegacy ? '.json' : '')
+    const storeFile = `${sessionId}_store.json`
+    const rmOptions = { force: true, recursive: true }
+
+    rmSync(this.sessionsDir(sessionFile), rmOptions)
+    rmSync(this.sessionsDir(storeFile), rmOptions)
+
+    sessions.delete(sessionId)
+    retries.delete(sessionId)
+  }
+
+  getChatList(sessionId, isGroup = false) {
+    const filter = isGroup ? '@g.us' : '@s.whatsapp.net'
+
+    return this.getSession(sessionId).store.chats.filter((chat) => {
+      return chat.id.endsWith(filter)
+    })
+  }
+
+  async isExists(session: WASocket, jid: string, isGroup = false) {
+    try {
+      let result;
+
+      if (isGroup) {
+        result = await session.groupMetadata(jid)
+
+        return Boolean(result.id)
+      }
+
+      result = await session.onWhatsApp(jid)
+
+      return result.exists
+    } catch {
+      return false
+    }
+  }
+
+  async sendMessage(session: AnyWASocket, receiver: string, message: AnyMessageContent, delayMs = 1000) {
+    try {
+      await delay(delayMs)
+
+      return session.sendMessage(receiver, message)
+    } catch {
+      return Promise.reject(null)
+    }
+  }
+
+  formatPhone(phone: string) {
+    if (phone.endsWith('@s.whatsapp.net')) {
+      return phone
+    }
+
+    let formatted = phone.replace(/\D/g, '')
+
+    return (formatted += '@s.whatsapp.net')
+  }
+
+  formatGroup(group: string) {
+    if (group.endsWith('@g.us')) {
+      return group
+    }
+
+    let formatted = group.replace(/[^\d-]/g, '')
+
+    return (formatted += '@g.us')
+  }
+
+  cleanup() {
+    console.log('Running cleanup before exit.')
+
+    sessions.forEach((session, sessionId) => {
+      if (!session.isLegacy) {
+        session.store.writeToFile(this.sessionsDir(`${sessionId}_store.json`))
+      }
+    })
+  }
+
+  init() {
+    readdir(this.sessionsDir(), (err, files) => {
+      if (err) {
+        throw err
+      }
+
+      for (const file of files) {
+        if ((!file.startsWith('md_') && !file.startsWith('legacy_')) || file.endsWith('_store')) {
+          continue
+        }
+
+        const filename = file.replace('.json', '')
+        const isLegacy = filename.split('_', 1)[0] !== 'md'
+        const sessionId = filename.substring(isLegacy ? 7 : 3)
+
+        this.createSession(sessionId, isLegacy)
+      }
+    })
+  }
+
+}
+

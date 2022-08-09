@@ -1,0 +1,160 @@
+<html>
+    <script src="https://cdn.socket.io/4.5.0/socket.io.min.js" integrity="sha384-7EyYLQZgWBi67fBtVxw60/OWl1kjsfrPFcaU0pp0nAh+i8FD068QogUvg85Ewy1k" crossorigin="anonymous"></script>
+  <head>
+    <meta charset="utf-8"><style>
+        body {
+          margin: 0 auto;
+          max-width: 800px;
+          padding: 0 20px;
+        }
+        
+        .container {
+          border: 2px solid #dedede;
+          background-color: #f1f1f1;
+          border-radius: 5px;
+          padding: 10px;
+          margin: 10px 0;
+        }
+        
+        .darker {
+          border-color: #ccc;
+          background-color: #ddd;
+        }
+        
+        .container::after {
+          content: "";
+          clear: both;
+          display: table;
+        }
+        
+    
+        .time-right {
+          float: right;
+          color: #aaa;
+        }
+        
+        .time-left {
+          float: left;
+          color: #999;
+        }
+        </style>
+  </head>
+  <body>
+    <div>listening http://localhost:3000</div>
+  </br>
+
+    <div>session.status: <span id="session-status"></span></div>
+    
+    <div id="qrcode">
+        <div>session.qrcode (base64 20th last chars): 
+            <span id="string-qrcode"></span>
+        </div>
+        
+        <div>
+            <img id="qrcode-div"/>
+        </div>
+        <span id="error-qrcode"></span>
+
+   <fieldset>
+    <legend>new bot</legend>
+    <div class="form-control">
+      <label>botId</label>
+      <input type="name" id="name"/>
+      <input id="btn" type="submit" value="connect" onclick="connect()"/>
+    </div>
+   </fieldset>
+             
+    </div>
+
+    <h1>chat</h1>
+
+    <div id="chatmessage" style="max-width: 60ch;"> 
+
+    </div>
+
+
+
+    
+  </body>
+</html>
+<script>
+    const url = 'http://localhost:3000';
+    var socket = io.connect(url);
+
+    socket.on('session.qrcode', function (qrstring) {
+        document.getElementById("qrcode-div").src = qrstring;
+        document.getElementById("string-qrcode").innerHTML = qrstring.substr(150, 20);
+    })
+    .on('connect_error', (err) => { 
+        console.log("connect err ", err) 
+        document.getElementById("error-qrcode").innerHTML = "error: " + err;
+    });
+
+    socket.on('session.status', function (status) {
+        document.getElementById("session-status").innerHTML = status.connection;
+
+        switch (status.connection) {
+            case "connected":
+            case "reconnect":   
+                document.getElementById('qrcode').style.display = "none"    
+            break;
+        
+            default:
+                document.getElementById('qrcode').style.display = "inline"
+            break;
+        }
+
+    })
+    
+    socket.on('on.message', (message) => {
+        console.log(message, 'message received');
+        console.log(message.key.fromMe, 'me');
+        if(message.key.fromMe) {
+            var element = document.getElementById('chatmessage');
+            element.innerHTML += `    
+    <div class="container darker" style="margin-left: 50px;"> 
+        <div>Eu:</div>
+        <p>${message.message.conversation}</p>
+        <span class="time-left">${timeStampToTime(message.messageTimestamp)}</span>
+    </div>
+    `
+        } else {
+            var element = document.getElementById('chatmessage');
+            element.innerHTML += `<div class="container"style="margin-right: 50px;">
+                <div id="from">${message.pushName}:</div>
+                <p>${message.message.conversation}</p>
+                <span class="time-right">${timeStampToTime(message.messageTimestamp)}</span>
+                </div>
+                `
+            
+            
+        }
+    });
+
+function timeStampToTime(timestamp) {
+    var theDate = new Date(timestamp * 1000);
+    dateString = 
+        theDate.getHours()
+            + ":" +
+        theDate.getMinutes()
+console.log(dateString)
+    return dateString;
+}
+
+function connect() {    
+    var data = JSON.stringify({
+        id: document.getElementById('name').value
+    });
+
+    console.log(data);
+    var xhr = new XMLHttpRequest();
+
+    xhr.open("POST", url);
+    xhr.setRequestHeader('Access-Control-Allow-Origin', '*');
+    // xhr.setRequestHeader('Content-Type', 'application/json');
+    xhr.withCredentials = true;
+    xhr.setRequestHeader("Content-Type", "application/json");
+    xhr.send(data);
+
+}
+</script>
