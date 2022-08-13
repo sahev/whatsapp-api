@@ -1,12 +1,10 @@
 import { Injectable } from '@nestjs/common';
 import { rmSync, readdir } from 'fs'
-import path, { join } from 'path'
+import { join } from 'path'
 import pino from 'pino'
 import makeWASocket, {
-  makeWALegacySocket,
   useMultiFileAuthState,
   makeInMemoryStore,
-  Browsers,
   DisconnectReason,
   delay,
   AnyWASocket,
@@ -14,10 +12,10 @@ import makeWASocket, {
   WASocket,
 } from '@adiwajshing/baileys'
 import { toDataURL } from 'qrcode'
-import response from './response';
 import { Boom } from '@hapi/boom'
 import { SessionWebSocket } from 'src/infra/websockets/session.ws';
 import { MessageWebSocket } from 'src/infra/websockets/message.ws';
+import response from './response';
 
 const sessions = new Map()
 const retries = new Map()
@@ -59,7 +57,7 @@ export class WhatsAppService {
   async createSession(sessionId: string, isLegacy = false, res = null) {
     const sessionFile = (isLegacy ? 'legacy_' : 'md_') + sessionId + (isLegacy ? '.json' : '')
 
-    const logger = pino({ level: 'silent' })
+    const logger = pino({ level: 'warn' })
     const store = makeInMemoryStore({ logger })
     
     const { state, saveCreds } = await useMultiFileAuthState(this.sessionsDir(sessionFile))
@@ -88,30 +86,26 @@ export class WhatsAppService {
 
     wa.ev.on('connection.update', async (update) => {
       const { connection, lastDisconnect } = update
-      
+
       if (connection === 'close') {
         const shouldReconnect = (lastDisconnect.error as Boom)?.output?.statusCode !== DisconnectReason.loggedOut &&
           (lastDisconnect.error as Boom)?.output?.statusCode !== DisconnectReason.connectionReplaced;
-          this.sessionWebSocket.emitSessionStatus({ connection: "disconnected" });
-          
+
         if (shouldReconnect) {
           this.createSession(sessionId, false, null)
           this.sessionWebSocket.emitSessionStatus({ connection: "reconnecting" });
         } else {
-          this.sessionWebSocket.emitSessionStatus({ connection: "reconnect" });
+          this.sessionWebSocket.emitSessionStatus({ connection: "disconnected" });
           this.deleteSession(sessionId);
         }
-        
       } else if (connection === 'open') {
         this.sessionWebSocket.emitSessionStatus({ connection: "connected" });
       }
-      
-      if (update.qr) {
-        this.sessionWebSocket.emitSessionStatus({connection: "waiting"});
-        this.sessionWebSocket.emitQrCodeEvent(await toDataURL(update.qr));
-      }
+        if (update.qr) {
+          this.sessionWebSocket.emitSessionStatus({connection: "waiting"});
+          this.sessionWebSocket.emitQrCodeEvent(await toDataURL(update.qr));
+        }
     })
-
 
     wa.ev.on('messages.upsert', async (m) => {
         const message = m.messages[0]
@@ -121,13 +115,11 @@ export class WhatsAppService {
             if (!isLegacy) {
               await wa.sendReadReceipt(message.key.remoteJid, message.key.participant, [message.key.id])
             }
-            
         }
     })
-
   }
 
-  getSession(sessionId: AnyWASocket | null) {
+  getSession(sessionId: string | null) {
     return sessions.get(sessionId) ?? null
   }
 
@@ -170,12 +162,19 @@ export class WhatsAppService {
   }
 
   async sendMessage(session: AnyWASocket, receiver: string, message: AnyMessageContent, delayMs = 1000) {
-    try {
-      await delay(delayMs)
+    if (!session) 
+      return response(401, false, 'disconnected')
 
-      return session.sendMessage(receiver, message)
-    } catch {
-      return Promise.reject(null)
+    try {
+      await delay(delayMs);
+      
+      let sendedMessage = await session.sendMessage(receiver, message)
+      
+      this.messageWebSocket.emitOnMessage(sendedMessage);
+      
+      return sendedMessage;
+    } catch (ex) {
+      return response(500, false, 'Error during send message', ex)
     }
   }
 

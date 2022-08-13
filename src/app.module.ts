@@ -1,15 +1,20 @@
 import { Module } from '@nestjs/common';
-import { SessionController } from './api/controllers/session.controller';
-import { WhatsAppController } from './api/controllers/whatsapp.controller';
-import { SessionService } from './business/services/session.service';
-import { WhatsAppService } from './business/services/whatsapp.service';
 import { SessionModule } from './infra/modules/session.module';
 import { SessionWebSocketModule } from './infra/modules/session.ws.module';
 import { WhatsAppModule } from './infra/modules/whatsapp.module';
-import { SessionWebSocket } from './infra/websockets/session.ws';
+import { ConfigModule } from '@nestjs/config';
+import { ConfigurationModule } from './infra/modules/configuration.module';
 
 @Module({
-  imports: [SessionWebSocketModule,  SessionModule, WhatsAppModule],
-
+  imports: [
+    ConfigModule.forRoot({ 
+      envFilePath: `${process.cwd()}/src/infra/configuration/${process.env.NODE_ENV}.env`
+    }), 
+    SessionWebSocketModule,  
+    SessionModule, 
+    WhatsAppModule,
+    ConfigurationModule
+  ],
 })
+
 export class AppModule {}

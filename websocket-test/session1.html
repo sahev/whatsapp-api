@@ -1,0 +1,209 @@
+<html>
+    <script src="https://cdn.socket.io/4.5.0/socket.io.min.js" integrity="sha384-7EyYLQZgWBi67fBtVxw60/OWl1kjsfrPFcaU0pp0nAh+i8FD068QogUvg85Ewy1k" crossorigin="anonymous"></script>
+  <head>
+    <meta charset="utf-8"><style>
+        body {
+          margin: 0 auto;
+          max-width: 800px;
+          padding: 0 20px;
+        }
+        
+        .container {
+          border: 2px solid #dedede;
+          background-color: #f1f1f1;
+          border-radius: 5px;
+          padding: 10px;
+          margin: 10px 0;
+        }
+        
+        .darker {
+          border-color: #ccc;
+          background-color: #ddd;
+        }
+        
+        .container::after {
+          content: "";
+          clear: both;
+          display: table;
+        }
+        
+    
+        .time-right {
+          float: right;
+          color: #aaa;
+        }
+        
+        .time-left {
+          float: left;
+          color: #999;
+        }
+        </style>
+  </head>
+  <body>
+    <div id="listening">listening http://localhost:3000</div>
+  </br>
+
+    <div>session.status: <span id="session-status"></span></div>
+    
+    <div id="qrcode">
+        <div>session.qrcode (base64 20th last chars): 
+            <span id="string-qrcode"></span>
+        </div>
+        
+        <div>
+            <img id="qrcode-div"/>
+        </div>
+        <span id="error-qrcode"></span>
+
+      </div>
+      <fieldset id="el-connect">
+       <legend>new bot</legend>
+       <div class="form-control">
+         <label>botId</label>
+         <input type="name" id="bot-id"/>
+         <input id="btn" type="submit" value="connect" onclick="connect()"/>
+       </div>
+      </fieldset>
+    
+    <div id="session-id" style="display: none;">sessionId: </div>
+    <input id="btn-disconnect" type="submit" value="disconnect" style="display: none;" onclick="disconnect()"/>
+
+    <h1>chat</h1>
+    <div id="chatmessage" style="max-width: 60ch;">
+    </div> 
+
+    <fieldset id="el-connect">
+      <div class="form-control">
+        <label>message</label>
+        <input type="name" id="message-text"/>
+        <input id="btn-sendmessage" type="submit" value="send" onclick="send()"/>
+      </div>
+     </fieldset>
+
+  </body>
+</html>
+<script>
+    const url = 'http://localhost:3000';
+    var socket = io.connect(url);
+
+    socket.on('session.qrcode', function (qrstring) {
+        document.getElementById("qrcode-div").src = qrstring;
+        document.getElementById("string-qrcode").innerHTML = qrstring.substr(150, 20);
+    })
+    .on('connect_error', (err) => { 
+        console.log("connect err ", err) 
+        document.getElementById("error-qrcode").innerHTML = "error: " + err;
+    });
+
+    socket.on('session.status', function (status) {
+        document.getElementById("session-status").innerHTML = status.connection;
+
+        switch (status.connection) {
+          case "connected":
+            document.getElementById('session-id').style.display = 'inline'
+            document.getElementById('session-id').innerHTML = 'sessionId: ' + document.getElementById('bot-id').value
+            document.getElementById('qrcode').style.display = "none"
+            document.getElementById('el-connect').style.display = "none"
+            document.getElementById('btn-disconnect').style.display = "inline"
+          break;
+      
+          case "disconnected":  
+            document.getElementById("qrcode-div").src = ''
+            document.getElementById('session-id').style.display = "none"
+            document.getElementById('chatmessage').innerHTML = ''
+            document.getElementById('qrcode').style.display = "inline"
+            document.getElementById('el-connect').style.display = "inline"
+            document.getElementById('btn-disconnect').style.display = "none"
+          break; 
+        }
+
+    })
+    
+    socket.on('on.message', (message) => {
+        console.log(message, 'message received');
+        console.log(message.key.fromMe, 'me');
+        
+        localStorage.setItem('remoteJid', message.key.remoteJid)
+        if(message.key.fromMe) {
+            var element = document.getElementById('chatmessage');
+            element.innerHTML += `    
+    <div class="container darker" style="margin-left: 50px;"> 
+        <div>Eu:</div>
+        <p>${message.message.conversation ?? message.message.extendedTextMessage.text}</p>
+        <span class="time-left">${timeStampToTime(message.messageTimestamp)}</span>
+    </div>
+    `
+        } else {
+            var element = document.getElementById('chatmessage');
+            element.innerHTML += `<div class="container"style="margin-right: 50px;">
+              <div id="from">${message.pushName}:</div>
+              <p>${message.message.conversation ?? message.message.extendedTextMessage.text}</p>
+              <span class="time-right">${timeStampToTime(message.messageTimestamp)}</span>
+              </div>
+              `
+        }
+        pageScroll();
+    });
+
+function pageScroll() {
+  window.scrollBy(0,300);
+}
+
+function timeStampToTime(timestamp) {
+  var theDate = new Date(timestamp * 1000);
+  dateString = 
+      theDate.getHours()
+          + ":" +
+      theDate.getMinutes()
+  return dateString;
+}
+
+function connect() {    
+  const url = "http://localhost:3000/session/create"
+  localStorage.setItem('bot-id', document.getElementById('bot-id').value)
+  var data = JSON.stringify({
+    sessionId: document.getElementById('bot-id').value
+  });
+  var xhr = new XMLHttpRequest();
+
+  xhr.open("POST", url);
+  xhr.setRequestHeader('Access-Control-Allow-Origin', '*');
+  xhr.setRequestHeader("Content-Type", "application/json");
+  xhr.send(data);
+
+}
+
+function disconnect() {    
+  const url = "http://localhost:3000/session/delete"
+  console.log(url, 'url')
+  var data = JSON.stringify({
+    sessionId: localStorage.getItem('bot-id')
+  });
+  var xhr = new XMLHttpRequest();
+
+  xhr.open("POST", url);
+  xhr.setRequestHeader('Access-Control-Allow-Origin', '*');
+  xhr.setRequestHeader("Content-Type", "application/json");
+  xhr.send(data);
+}
+
+function send() {    
+  const url = "http://localhost:3000/chat/send"
+  console.log(url, 'url')
+  var data = JSON.stringify({
+    sessionId: localStorage.getItem('bot-id'),
+    receiver: localStorage.getItem("remoteJid"),
+    message: {
+        text: document.getElementById('message-text').value
+    },
+    delayMs: 1000
+  });
+  var xhr = new XMLHttpRequest();
+
+  xhr.open("POST", url);
+  xhr.setRequestHeader('Access-Control-Allow-Origin', '*');
+  xhr.setRequestHeader("Content-Type", "application/json");
+  xhr.send(data);
+}
+
+</script>

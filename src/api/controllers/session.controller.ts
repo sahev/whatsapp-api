@@ -1,7 +1,7 @@
 import { Body, Controller, Get, Param, Post } from '@nestjs/common';
 import { SessionService } from '../../business/services/session.service';
 
-@Controller()
+@Controller('session')
 export class SessionController {
   constructor(
     private readonly sessionService: SessionService
@@ -9,13 +9,21 @@ export class SessionController {
   
   @Get('find/:id')
   find(@Param('id') id) {
-    console.log(id, 'find id');
-    
     return this.sessionService.find(id)
   }
 
-  @Post('create/')
-  async  create(@Body() data: CreateRequestDto) {    
+  @Get('status/:id')
+  status(@Param('id') id) {
+    return this.sessionService.status(id)
+  }
+
+  @Post('create')
+  async  create(@Body() data: CreateSessionRequestDto) {    
     return await this.sessionService.add(data)
+  }
+
+  @Post('delete')
+  async delete(@Body() data: DeleteSessionRequestDto) {    
+    return await this.sessionService.delete(data)
   }
 }

@@ -10,13 +10,21 @@ export class SessionService {
         
     }
     find(res) {
-        return response(res, 200, true, 'Session found.')
+        var exists = this.whatsAppService.isSessionExists(res.id);
+        if (!exists)
+            return response(404, false, 'Session not found.')
+            
+        return response(200, true, 'Session found.')
     }
     
-    status(req, res) {
+    status(sessionId) {
         const states = ['connecting', 'connected', 'disconnecting', 'disconnected']
     
-        const session = this.whatsAppService.getSession(res.locals.sessionId)
+        const session = this.whatsAppService.getSession(sessionId)
+
+        if (!session)
+            return response(200, true, '', { status: "disconnected" })
+
         let state = states[session.ws.readyState]
     
         state =
@@ -24,30 +32,30 @@ export class SessionService {
                 ? 'authenticated'
                 : state
     
-        response(res, 200, true, '', { status: state })
+        return response(200, true, '', { status: state })
     }
     
-    async add(req: CreateRequestDto, res = '') {
-        const { id, isLegacy } = req
+    async add(req: CreateSessionRequestDto, res = '') {
+        const { sessionId, isLegacy } = req
     
-        if (this.whatsAppService.isSessionExists(id)) {
-            return response(res, 409, false, 'Session already exists, please use another id.')
+        if (this.whatsAppService.isSessionExists(sessionId)) {
+            return response(409, false, 'Session already exists, please use another id.')
         }
     
-        return await this.whatsAppService.createSession(id, isLegacy, res)
+        return await this.whatsAppService.createSession(sessionId, isLegacy, res)
     }
     
-    async del(req, res) {
-        const { id } = req.params
-        const session = this.whatsAppService.getSession(id)
+    async delete(data: DeleteSessionRequestDto) {
+        const { sessionId } = data
+        const session = this.whatsAppService.getSession(sessionId)
     
         try {
             await session.logout()
         } catch {
         } finally {
-            this.whatsAppService.deleteSession(id, session.isLegacy)
+            this.whatsAppService.deleteSession(sessionId, session.isLegacy)
         }
     
-        response(res, 200, true, 'The session has been successfully deleted.')
+        return response(200, true, 'The session has been successfully deleted.', data)
     }
 }

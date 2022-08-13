@@ -1,7 +1,7 @@
 import { io } from "socket.io-client";
 
 function socketConnect() {
-    const socket = io("http://localhost:3000/");
+    const socket = io(process.env.HOST + process.env.API_PORT);
     socket.connect();
 
     if(socket) {
