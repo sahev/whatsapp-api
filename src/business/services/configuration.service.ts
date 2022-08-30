@@ -1,7 +1,8 @@
 import { Injectable } from "@nestjs/common";
+import { ConfigurationInterface } from "./interfaces/configuration.interface";
 
 @Injectable()
-export class ConfigurationService {
+export class ConfigurationService implements ConfigurationInterface {
     GetEnvConfiguration() {
         return {
             node_env: process.env.NODE_ENV,
