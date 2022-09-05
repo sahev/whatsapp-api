@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Post } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Post } from '@nestjs/common';
 import { SessionService } from '../../business/services/session.service';
 
 @Controller('session')
@@ -22,8 +22,8 @@ export class SessionController {
     return await this.sessionService.add(data)
   }
 
-  @Post('delete')
-  async delete(@Body() data: DeleteSessionRequestDto) {    
-    return await this.sessionService.delete(data)
+  @Delete('delete/:sessionId')
+  async delete(@Param('sessionId') sessionId: string) {    
+    return await this.sessionService.delete(sessionId)
   }
 }

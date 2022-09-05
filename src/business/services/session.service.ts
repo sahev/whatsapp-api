@@ -45,8 +45,7 @@ export class SessionService {
         return await this.whatsAppService.createSession(sessionId, isLegacy, res)
     }
     
-    async delete(data: DeleteSessionRequestDto) {
-        const { sessionId } = data
+    async delete(sessionId: string) {
         const session = this.whatsAppService.getSession(sessionId)
     
         try {
@@ -56,6 +55,6 @@ export class SessionService {
             this.whatsAppService.deleteSession(sessionId, session.isLegacy)
         }
     
-        return response(200, true, 'The session has been successfully deleted.', data)
+        return response(200, true, 'The session has been successfully deleted.', sessionId)
     }
 }
