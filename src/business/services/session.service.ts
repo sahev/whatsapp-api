@@ -35,14 +35,14 @@ export class SessionService {
         return response(200, true, '', { status: state })
     }
     
-    async add(req: CreateSessionRequestDto, res = '') {
+    async add(req: CreateSessionRequestDto) {
         const { sessionId, isLegacy } = req
     
         if (this.whatsAppService.isSessionExists(sessionId)) {
             return response(409, false, 'Session already exists, please use another id.')
         }
     
-        return await this.whatsAppService.createSession(sessionId, isLegacy, res)
+        return await this.whatsAppService.createSession(sessionId, isLegacy)
     }
     
     async delete(sessionId: string) {

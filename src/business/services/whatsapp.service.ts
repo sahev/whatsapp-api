@@ -16,16 +16,20 @@ import { Boom } from '@hapi/boom'
 import { SessionWebSocket } from 'src/infra/websockets/session.ws';
 import { MessageWebSocket } from 'src/infra/websockets/message.ws';
 import response from './response';
+import { IConnectionComponent } from './interfaces/connectionComponent.interface';
+import { HttpService } from '@nestjs/axios';
+import { lastValueFrom } from 'rxjs/internal/lastValueFrom';
 
 const sessions = new Map()
 const retries = new Map()
 
 @Injectable()
-export class WhatsAppService {
+export class WhatsAppService implements IConnectionComponent {
 
   constructor(
       private readonly sessionWebSocket: SessionWebSocket,
       private readonly messageWebSocket: MessageWebSocket,
+      private readonly httpService: HttpService
     ) { }
 
   sessionsDir(sessionId = '') {
@@ -54,7 +58,7 @@ export class WhatsAppService {
     return false
   }
 
-  async createSession(sessionId: string, isLegacy = false, res = null) {
+  async createSession(sessionId: string, isLegacy = false) {
     const sessionFile = (isLegacy ? 'legacy_' : 'md_') + sessionId + (isLegacy ? '.json' : '')
 
     const logger = pino({ level: 'warn' })
@@ -92,7 +96,7 @@ export class WhatsAppService {
           (lastDisconnect.error as Boom)?.output?.statusCode !== DisconnectReason.connectionReplaced;
 
         if (shouldReconnect) {
-          this.createSession(sessionId, false, null)
+          this.createSession(sessionId, false)
           this.sessionWebSocket.emitSessionStatus({ connection: "reconnecting" });
         } else {
           this.sessionWebSocket.emitSessionStatus({ connection: "disconnected" });
@@ -107,15 +111,21 @@ export class WhatsAppService {
         }
     })
 
+    await this.listenMessages(sessionId);
+  }
+
+  async listenMessages(sessionId: string) {
+
+    const wa: WASocket = sessions.get(sessionId);
+
     wa.ev.on('messages.upsert', async (m) => {
-        const message = m.messages[0]
-        if (m.type === 'notify') {
-          this.messageWebSocket.emitOnMessage(message);
-            await delay(1000)
-            if (!isLegacy) {
-              await wa.sendReadReceipt(message.key.remoteJid, message.key.participant, [message.key.id])
-            }
-        }
+      const message = m.messages[0]
+      if (m.type === 'notify') {
+        this.messageWebSocket.emitOnMessage(message);
+        await this.publishQueue(message)
+        await delay(1000)
+        await wa.sendReadReceipt(message.key.remoteJid, message.key.participant, [message.key.id])
+      }
     })
   }
 
@@ -226,6 +236,35 @@ export class WhatsAppService {
         this.createSession(sessionId, isLegacy)
       }
     })
+  }
+
+  async publishQueue(data: any) {
+    let info = {
+      contactInfo: data.key,
+      messageInfo: { 
+        pushName: data.pushName,
+        message: data.message.conversation,
+        messageTimestamp: data.messageTimestamp
+      }
+    }
+
+    let msgToQueue = {
+      properties: {
+        content_type: "application/json"
+      },
+      routing_key: process.env.QUEUE_NAME,
+      payload: JSON.stringify(info),
+      payload_encoding: "string"
+    }
+
+    await lastValueFrom(
+      this.httpService.post(process.env.QUEUE_LOCATION, msgToQueue, {
+        auth: {
+          username: process.env.QUEUE_USERNAME,
+          password: process.env.QUEUE_PASSWORD
+        }
+      })
+    );
   }
 
 }

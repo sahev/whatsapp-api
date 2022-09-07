@@ -1,3 +1,4 @@
+import { HttpModule } from '@nestjs/axios';
 import { Module } from '@nestjs/common';
 import { SessionController } from 'src/api/controllers/session.controller';
 import { SessionService } from 'src/business/services/session.service';
@@ -7,7 +8,7 @@ import { SessionWebSocket } from '../websockets/session.ws';
 import { WhatsAppModule } from './whatsapp.module';
 
 @Module({
-  imports: [WhatsAppModule],
+  imports: [HttpModule, WhatsAppModule],
   controllers: [SessionController],
   providers: [WhatsAppService, SessionWebSocket, SessionService, MessageWebSocket],
 })
