@@ -10,6 +10,8 @@ import makeWASocket, {
   AnyWASocket,
   AnyMessageContent,
   WASocket,
+  generateWAMessage,
+  WAProto,
 } from '@adiwajshing/baileys'
 import { toDataURL } from 'qrcode'
 import { Boom } from '@hapi/boom'
@@ -124,7 +126,7 @@ export class WhatsAppService implements IConnectionComponent {
         this.messageWebSocket.emitOnMessage(message);
         await this.publishQueue(message)
         await delay(1000)
-        await wa.sendReadReceipt(message.key.remoteJid, message.key.participant, [message.key.id])
+        // await wa.sendReadReceipt(message.key.remoteJid, message.key.participant, [message.key.id])
       }
     })
   }
@@ -171,7 +173,7 @@ export class WhatsAppService implements IConnectionComponent {
     }
   }
 
-  async sendMessage(session: AnyWASocket, receiver: string, message: AnyMessageContent, delayMs = 1000) {
+  async sendMessage(session: WASocket, receiver: string, message: AnyMessageContent, delayMs = 1000) {
     if (!session) 
       return response(401, false, 'disconnected')
 
