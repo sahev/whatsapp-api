@@ -9,9 +9,7 @@ import makeWASocket, {
   delay,
   AnyWASocket,
   AnyMessageContent,
-  WASocket,
-  generateWAMessage,
-  WAProto,
+  WASocket
 } from '@adiwajshing/baileys'
 import { toDataURL } from 'qrcode'
 import { Boom } from '@hapi/boom'
@@ -21,9 +19,11 @@ import response from './response';
 import { IConnectionComponent } from './interfaces/connectionComponent.interface';
 import { HttpService } from '@nestjs/axios';
 import { lastValueFrom } from 'rxjs/internal/lastValueFrom';
+import { QueueService } from 'src/infra/queue/queue';
 
 const sessions = new Map()
 const retries = new Map()
+const queue = new QueueService();
 
 @Injectable()
 export class WhatsAppService implements IConnectionComponent {
@@ -61,6 +61,9 @@ export class WhatsAppService implements IConnectionComponent {
   }
 
   async createSession(sessionId: string, isLegacy = false) {
+    
+    await this.connectQueueServer();
+
     const sessionFile = (isLegacy ? 'legacy_' : 'md_') + sessionId + (isLegacy ? '.json' : '')
 
     const logger = pino({ level: 'warn' })
@@ -113,6 +116,7 @@ export class WhatsAppService implements IConnectionComponent {
         }
     })
 
+    await this.queueConsumerMessages();
     await this.listenMessages(sessionId);
   }
 
@@ -245,7 +249,7 @@ export class WhatsAppService implements IConnectionComponent {
       contactInfo: data.key,
       messageInfo: { 
         pushName: data.pushName,
-        message: data.message.conversation,
+        message: data.message,
         messageTimestamp: data.messageTimestamp
       }
     }
@@ -254,7 +258,7 @@ export class WhatsAppService implements IConnectionComponent {
       properties: {
         content_type: "application/json"
       },
-      routing_key: process.env.QUEUE_NAME,
+      routing_key: process.env.QUEUE_PRODUCER_NAME,
       payload: JSON.stringify(info),
       payload_encoding: "string"
     }
@@ -269,5 +273,32 @@ export class WhatsAppService implements IConnectionComponent {
     );
   }
 
+  async connectQueueServer() {
+    await queue.connectToServer();
+  }
+
+  async queueConsumerMessages() {
+    
+  
+    await queue.consume(process.env.QUEUE_CONSUMER_NAME, async messageReceived => {
+      let data = this.parseMessageQueue(messageReceived.content.toString());
+      
+      if(!this.isSessionExists(data.sessionId)) {
+        console.log(`error on consume message: sessionId ${data.sessionId} not found or disconnected`);
+        return;
+      }
+        
+      const wa: WASocket = sessions.get(data.sessionId);
+      const jid = this.formatPhone(data.receiver);
+      
+      await this.sendMessage(wa, jid, data.message, data.delayMs ? data.delayMs : 1000 )
+    })
+  }
+
+  parseMessageQueue(data: string) {
+    const messageQueueParsed = JSON.parse(data);
+    const messageParsed = JSON.parse(messageQueueParsed);
+    return messageParsed;
+  }
 }
 
