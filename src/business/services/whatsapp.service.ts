@@ -128,7 +128,7 @@ export class WhatsAppService implements IConnectionComponent {
       const message = m.messages[0]
       if (m.type === 'notify') {
         this.messageWebSocket.emitOnMessage(message);
-        await this.publishQueue(message)
+        await this.publishQueue(sessionId, message)
         await delay(1000)
         // await wa.sendReadReceipt(message.key.remoteJid, message.key.participant, [message.key.id])
       }
@@ -244,14 +244,15 @@ export class WhatsAppService implements IConnectionComponent {
     })
   }
 
-  async publishQueue(data: any) {
-    let info = {
-      contactInfo: data.key,
-      messageInfo: { 
+  async publishQueue(sessionId: string, data: any) {
+    let messageInfo = {
+        remoteJid: data.key.remoteJid,
+        fromJid: sessionId,
+        fromMe: data.key.fromMe,
+        id: data.key.id,
         pushName: data.pushName,
         message: data.message,
         messageTimestamp: data.messageTimestamp
-      }
     }
 
     let msgToQueue = {
@@ -259,7 +260,7 @@ export class WhatsAppService implements IConnectionComponent {
         content_type: "application/json"
       },
       routing_key: process.env.QUEUE_PRODUCER_NAME,
-      payload: JSON.stringify(info),
+      payload: JSON.stringify(messageInfo),
       payload_encoding: "string"
     }
 
