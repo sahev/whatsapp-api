@@ -9,7 +9,8 @@ import makeWASocket, {
   delay,
   AnyWASocket,
   AnyMessageContent,
-  WASocket
+  WASocket,
+  proto
 } from '@adiwajshing/baileys'
 import { toDataURL } from 'qrcode'
 import { Boom } from '@hapi/boom'
@@ -29,10 +30,10 @@ const queue = new QueueService();
 export class WhatsAppService implements IConnectionComponent {
 
   constructor(
-      private readonly sessionWebSocket: SessionWebSocket,
-      private readonly messageWebSocket: MessageWebSocket,
-      private readonly httpService: HttpService
-    ) { }
+    private readonly sessionWebSocket: SessionWebSocket,
+    private readonly messageWebSocket: MessageWebSocket,
+    private readonly httpService: HttpService
+  ) { }
 
   sessionsDir(sessionId = '') {
     return join(__dirname, 'tokens', sessionId ? sessionId : '')
@@ -61,14 +62,14 @@ export class WhatsAppService implements IConnectionComponent {
   }
 
   async createSession(sessionId: string, isLegacy = false) {
-    
+
     await this.connectQueueServer();
 
     const sessionFile = (isLegacy ? 'legacy_' : 'md_') + sessionId + (isLegacy ? '.json' : '')
 
     const logger = pino({ level: 'warn' })
     const store = makeInMemoryStore({ logger })
-    
+
     const { state, saveCreds } = await useMultiFileAuthState(this.sessionsDir(sessionFile))
 
     const waConfig = {
@@ -110,14 +111,16 @@ export class WhatsAppService implements IConnectionComponent {
       } else if (connection === 'open') {
         this.sessionWebSocket.emitSessionStatus({ connection: "connected" });
       }
-        if (update.qr) {
-          this.sessionWebSocket.emitSessionStatus({connection: "waiting"});
-          this.sessionWebSocket.emitQrCodeEvent(await toDataURL(update.qr));
-        }
+      if (update.qr) {
+        this.sessionWebSocket.emitSessionStatus({ connection: "waiting" });
+        this.sessionWebSocket.emitQrCodeEvent(await toDataURL(update.qr));
+      }
     })
 
-    await this.queueConsumerMessages();
+    await lastValueFrom(this.httpService.post(`${process.env.WORKER_API_LOCATION}/worker/${sessionId}/start`));
+    await this.queueConsumerMessages(sessionId);
     await this.listenMessages(sessionId);
+       
   }
 
   async listenMessages(sessionId: string) {
@@ -129,7 +132,6 @@ export class WhatsAppService implements IConnectionComponent {
       if (m.type === 'notify') {
         this.messageWebSocket.emitOnMessage(message);
         await this.publishQueue(sessionId, message)
-        await delay(1000)
         // await wa.sendReadReceipt(message.key.remoteJid, message.key.participant, [message.key.id])
       }
     })
@@ -178,16 +180,16 @@ export class WhatsAppService implements IConnectionComponent {
   }
 
   async sendMessage(session: WASocket, receiver: string, message: AnyMessageContent, delayMs = 1000) {
-    if (!session) 
+    if (!session)
       return response(401, false, 'disconnected')
 
     try {
       await delay(delayMs);
-      
+
       let sendedMessage = await session.sendMessage(receiver, message)
-      
+
       this.messageWebSocket.emitOnMessage(sendedMessage);
-      
+
       return sendedMessage;
     } catch (ex) {
       return response(500, false, 'Error during send message', ex)
@@ -245,21 +247,23 @@ export class WhatsAppService implements IConnectionComponent {
   }
 
   async publishQueue(sessionId: string, data: any) {
+    console.log('mensagem publicada whatsapp');
+    
     let messageInfo = {
-        remoteJid: data.key.remoteJid,
-        fromJid: sessionId,
-        fromMe: data.key.fromMe,
-        id: data.key.id,
-        pushName: data.pushName,
-        message: data.message,
-        messageTimestamp: data.messageTimestamp
+      remoteJid: data.key.remoteJid,
+      fromJid: sessionId,
+      fromMe: data.key.fromMe,
+      id: data.key.id,
+      pushName: data.pushName,
+      message: data.message,
+      messageTimestamp: data.messageTimestamp
     }
 
     let msgToQueue = {
       properties: {
         content_type: "application/json"
       },
-      routing_key: process.env.QUEUE_PRODUCER_NAME,
+      routing_key: `receivedMessage_${sessionId}`,
       payload: JSON.stringify(messageInfo),
       payload_encoding: "string"
     }
@@ -278,28 +282,28 @@ export class WhatsAppService implements IConnectionComponent {
     await queue.connectToServer();
   }
 
-  async queueConsumerMessages() {
-    
-  
-    await queue.consume(process.env.QUEUE_CONSUMER_NAME, async messageReceived => {
-      let data = this.parseMessageQueue(messageReceived.content.toString());
-      
-      if(!this.isSessionExists(data.sessionId)) {
+  async queueConsumerMessages(sessionId: string) {
+
+
+    await queue.consume(`sendMessage_${sessionId}`, async sendMessage => {   
+      console.log('mensagem consumida whatsapp');
+         
+      let data = this.parseMessageQueue(sendMessage.content.toString());
+
+      if (!this.isSessionExists(data.sessionId)) {
         console.log(`error on consume message: sessionId ${data.sessionId} not found or disconnected`);
         return;
       }
-        
+
       const wa: WASocket = sessions.get(data.sessionId);
       const jid = this.formatPhone(data.receiver);
-      
-      await this.sendMessage(wa, jid, data.message, data.delayMs ? data.delayMs : 1000 )
+
+      await this.sendMessage(wa, jid, data.message, data.delayMs ? data.delayMs : 1000)
     })
   }
 
   parseMessageQueue(data: string) {
-    const messageQueueParsed = JSON.parse(data);
-    const messageParsed = JSON.parse(messageQueueParsed);
-    return messageParsed;
+    return JSON.parse(data);
   }
 }
 
