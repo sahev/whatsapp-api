@@ -1,4 +1,5 @@
 import { Injectable } from "@nestjs/common";
+import { httpStatus } from "src/infra/helpers/httpStatusEnum";
 import response from "./response";
 import { WhatsAppService } from "./whatsapp.service";
 
@@ -12,9 +13,9 @@ export class SessionService {
     find(res) {
         var exists = this.whatsAppService.isSessionExists(res.id);
         if (!exists)
-            return response(404, false, 'Session not found.')
+            return response(httpStatus.NotFound, false, 'Session not found.')
             
-        return response(200, true, 'Session found.')
+        return response(httpStatus.Ok, true, 'Session found.')
     }
     
     status(sessionId) {
@@ -23,7 +24,7 @@ export class SessionService {
         const session = this.whatsAppService.getSession(sessionId)
 
         if (!session)
-            return response(200, true, '', { status: "disconnected" })
+            return response(httpStatus.Ok, true, '', { status: "disconnected" })
 
         let state = states[session.ws.readyState]
     
@@ -32,14 +33,14 @@ export class SessionService {
                 ? 'authenticated'
                 : state
     
-        return response(200, true, '', { status: state })
+        return response(httpStatus.Ok, true, '', { status: state })
     }
     
     async add(req: CreateSessionRequestDto) {
         const { sessionId, isLegacy } = req
     
         if (this.whatsAppService.isSessionExists(sessionId)) {
-            return response(409, false, 'Session already exists, please use another id.')
+            return response(httpStatus.Conflict, false, 'Session already exists, please use another id.')
         }
     
         return await this.whatsAppService.createSession(sessionId, isLegacy)
@@ -55,6 +56,6 @@ export class SessionService {
             this.whatsAppService.deleteSession(sessionId, session.isLegacy)
         }
     
-        return response(200, true, 'The session has been successfully deleted.', sessionId)
+        return response(httpStatus.Ok, true, 'The session has been successfully deleted.', sessionId)
     }
 }

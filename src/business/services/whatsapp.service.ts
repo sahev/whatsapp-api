@@ -21,6 +21,7 @@ import { IConnectionComponent } from './interfaces/connectionComponent.interface
 import { HttpService } from '@nestjs/axios';
 import { lastValueFrom } from 'rxjs/internal/lastValueFrom';
 import { QueueService } from 'src/infra/queue/queue';
+import { httpStatus } from 'src/infra/helpers/httpStatusEnum';
 
 const sessions = new Map()
 const retries = new Map()
@@ -181,7 +182,7 @@ export class WhatsAppService implements IConnectionComponent {
 
   async sendMessage(session: WASocket, receiver: string, message: AnyMessageContent, delayMs = 1000) {
     if (!session)
-      return response(401, false, 'disconnected')
+      return response(httpStatus.Unauthorized, false, 'disconnected')
 
     try {
       await delay(delayMs);
@@ -192,7 +193,7 @@ export class WhatsAppService implements IConnectionComponent {
 
       return sendedMessage;
     } catch (ex) {
-      return response(500, false, 'Error during send message', ex)
+      return response(httpStatus.internalServerError, false, 'Error during send message', ex)
     }
   }
 
