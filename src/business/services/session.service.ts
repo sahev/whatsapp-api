@@ -8,6 +8,15 @@ export class SessionService {
     constructor(
         private readonly whatsAppService: WhatsAppService
     ) {
+
+    /**
+    * TODO: need to declare each accessor level to each method, like:
+    *
+    * public
+    * private
+    * protected
+    * 
+    */
         
     }
     find(res) {

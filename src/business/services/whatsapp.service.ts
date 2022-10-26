@@ -36,6 +36,17 @@ export class WhatsAppService implements IConnectionComponent {
     private readonly httpService: HttpService
   ) { }
 
+  /**
+   * TODO: need to declare each accessor level to each method, like:
+   *
+   * public
+   * private
+   * protected
+   * 
+   * TODO: need to avaliate each scope method to implement extensor method, helper method or even in a base method
+   * 
+   */
+
   sessionsDir(sessionId = '') {
     return join(__dirname, 'tokens', sessionId ? sessionId : '')
   }
