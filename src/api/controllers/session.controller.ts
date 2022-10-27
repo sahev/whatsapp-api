@@ -22,7 +22,7 @@ export class SessionController {
     return await this.sessionService.add(data)
   }
 
-  @Delete('delete/:sessionId')
+  @Delete(':sessionId')
   async delete(@Param('sessionId') sessionId: string) {    
     return await this.sessionService.delete(sessionId)
   }

@@ -174,17 +174,15 @@ function connect() {
 }
 
 function disconnect() {    
-  const url = "http://localhost:3000/session/delete"
+  const url = `http://localhost:3000/session/${localStorage.getItem('bot-id')}`
   console.log(url, 'url')
-  var data = JSON.stringify({
-    sessionId: localStorage.getItem('bot-id')
-  });
+
   var xhr = new XMLHttpRequest();
 
-  xhr.open("POST", url);
+  xhr.open("DELETE", url);
   xhr.setRequestHeader('Access-Control-Allow-Origin', '*');
   xhr.setRequestHeader("Content-Type", "application/json");
-  xhr.send(data);
+  xhr.send();
 }
 
 function send() {    
