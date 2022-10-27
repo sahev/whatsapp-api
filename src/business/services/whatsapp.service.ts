@@ -36,6 +36,7 @@ export class WhatsAppService implements IConnectionComponent {
     private readonly httpService: HttpService
   ) { }
 
+
   /**
    * TODO: need to declare each accessor level to each method, like:
    *
@@ -73,8 +74,7 @@ export class WhatsAppService implements IConnectionComponent {
     return false
   }
 
-  async createSession(sessionId: string, isLegacy = false) {
-
+  async createSession(sessionId: string, isLegacy: boolean): Promise<any> {
     await this.connectQueueServer();
 
     const sessionFile = (isLegacy ? 'legacy_' : 'md_') + sessionId + (isLegacy ? '.json' : '')
@@ -132,8 +132,69 @@ export class WhatsAppService implements IConnectionComponent {
     await lastValueFrom(this.httpService.post(`${process.env.WORKER_API_LOCATION}/worker/${sessionId}/start`));
     await this.queueConsumerMessages(sessionId);
     await this.listenMessages(sessionId);
-       
   }
+
+  // async createSession(sessionId: string, isLegacy = false) {
+
+  //   await this.connectQueueServer();
+
+  //   const sessionFile = (isLegacy ? 'legacy_' : 'md_') + sessionId + (isLegacy ? '.json' : '')
+
+  //   const logger = pino({ level: 'warn' })
+  //   const store = makeInMemoryStore({ logger })
+
+  //   const { state, saveCreds } = await useMultiFileAuthState(this.sessionsDir(sessionFile))
+
+  //   const waConfig = {
+  //     auth: state,
+  //     logger,
+  //   }
+
+  //   const wa: AnyWASocket = makeWASocket(waConfig)
+
+  //   if (!isLegacy) {
+  //     store.readFromFile(this.sessionsDir(`${sessionId}_store.json`))
+  //     store.bind(wa.ev)
+  //   }
+
+  //   sessions.set(sessionId, { ...wa, store, isLegacy })
+
+  //   wa.ev.on('creds.update', saveCreds)
+
+  //   wa.ev.on('chats.set', ({ chats }) => {
+  //     if (isLegacy) {
+  //       store.chats.insertIfAbsent(...chats)
+  //     }
+  //   })
+
+  //   wa.ev.on('connection.update', async (update) => {
+  //     const { connection, lastDisconnect } = update
+
+  //     if (connection === 'close') {
+  //       const shouldReconnect = (lastDisconnect.error as Boom)?.output?.statusCode !== DisconnectReason.loggedOut &&
+  //         (lastDisconnect.error as Boom)?.output?.statusCode !== DisconnectReason.connectionReplaced;
+
+  //       if (shouldReconnect) {
+  //         this.createSession(sessionId, false)
+  //         this.sessionWebSocket.emitSessionStatus({ connection: "reconnecting" });
+  //       } else {
+  //         this.sessionWebSocket.emitSessionStatus({ connection: "disconnected" });
+  //         this.deleteSession(sessionId);
+  //       }
+  //     } else if (connection === 'open') {
+  //       this.sessionWebSocket.emitSessionStatus({ connection: "connected" });
+  //     }
+  //     if (update.qr) {
+  //       this.sessionWebSocket.emitSessionStatus({ connection: "waiting" });
+  //       this.sessionWebSocket.emitQrCodeEvent(await toDataURL(update.qr));
+  //     }
+  //   })
+
+  //   await lastValueFrom(this.httpService.post(`${process.env.WORKER_API_LOCATION}/worker/${sessionId}/start`));
+  //   await this.queueConsumerMessages(sessionId);
+  //   await this.listenMessages(sessionId);
+       
+  // }
 
   async listenMessages(sessionId: string) {
 

@@ -1,3 +1,3 @@
-export interface IConnectionComponent {
-    createSession(sessionId: string, isLegacy: boolean): Promise<any>
+export declare interface IConnectionComponent {
+    createSession(sessionId: string, isLegacy: boolean): Promise<any>;
 }
