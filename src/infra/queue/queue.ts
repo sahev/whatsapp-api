@@ -6,7 +6,6 @@ export class QueueService {
 
   private conn: Connection;
   private channel: Channel;
-  private uri = process.env.QUEUE_CONSUMER_LOCATION
 
   async connectToServer(): Promise<any> {
     try {
@@ -18,7 +17,7 @@ export class QueueService {
   }
 
   async start(): Promise<void> {
-    this.conn = await connect(this.uri);    
+    this.conn = await connect(process.env.QUEUE_CONSUMER_LOCATION);
     this.channel = await this.conn.createChannel();
     console.log('queue thread connected');
   }

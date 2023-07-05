@@ -1,16 +1,16 @@
 import { MessageBody, WebSocketGateway, WebSocketServer } from "@nestjs/websockets";
 import { Server } from "socket.io";
 
-@WebSocketGateway({ cors: true }) 
+@WebSocketGateway({ cors: true })
 export class SessionWebSocket {
     @WebSocketServer() server: Server;
-    
-    emitQrCodeEvent(@MessageBody() data: {}): void {
+
+    emitQrCodeEvent(sessionId: string, @MessageBody() data: {}): void {
       console.log('qr code emit');
-      this.server.emit("session.qrcode", data);
+      this.server.emit(`session.qrcode.${sessionId}`, data);
     }
 
-    emitSessionStatus(@MessageBody() data: {}): void {
-      this.server.emit("session.status", data);
+    emitSessionStatus(sessionId: string, @MessageBody() data: {}): void {
+      this.server.emit(`session.status.${sessionId}`, data);
     }
 }

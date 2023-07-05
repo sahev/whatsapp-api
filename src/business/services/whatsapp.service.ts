@@ -7,7 +7,6 @@ import makeWASocket, {
   makeInMemoryStore,
   DisconnectReason,
   delay,
-  AnyWASocket,
   AnyMessageContent,
   WASocket,
   proto
@@ -22,15 +21,38 @@ import { HttpService } from '@nestjs/axios';
 import { lastValueFrom } from 'rxjs/internal/lastValueFrom';
 import { QueueService } from 'src/infra/queue/queue';
 import { httpStatus } from 'src/infra/helpers/httpStatusEnum';
+import  { useRedisAuthState } from 'baileys-redis-auth'
+import * as redis from 'redis';
 
-const sessions = new Map()
-const retries = new Map()
-const queue = new QueueService();
+const client = redis.createClient({
+    socket: {
+        host: 'api.cliinic.cloud'
+    }
+});
+
+(async () => {
+  await client.connect();
+})();
+
+console.log("Connecting to the Redis");
+
+client.on("ready", () => {
+  console.log("Connected!");
+  client.flushAll()
+});
+
+client.on("error", (err) => {
+  console.log("Error in the Connection", err);
+});
+
+let sessions = new Map()
+let retries = new Map()
+let queue = new QueueService();
 
 @Injectable()
 export class WhatsAppService implements IConnectionComponent {
 
-  constructor(
+  constructor (
     private readonly sessionWebSocket: SessionWebSocket,
     private readonly messageWebSocket: MessageWebSocket,
     private readonly httpService: HttpService
@@ -43,25 +65,24 @@ export class WhatsAppService implements IConnectionComponent {
    * public
    * private
    * protected
-   * 
+   *
    * TODO: need to avaliate each scope method to implement extensor method, helper method or even in a base method
-   * 
+   *
    */
 
-  sessionsDir(sessionId = '') {
+  sessionsDir (sessionId = '') {
     return join(__dirname, 'tokens', sessionId ? sessionId : '')
   }
 
-  isSessionExists(sessionId: any) {
+  isSessionExists (sessionId: any) {
     return sessions.has(sessionId)
   }
 
-  shouldReconnect(sessionId: string) {
-    let maxRetries = process.env.MAX_RETRIES ?? 0;
+  shouldReconnect (sessionId: string) {
+    let maxRetries = parseInt(process.env.MAX_RETRIES) ?? 0;
     let attempts = retries.get(sessionId) ?? 0
 
     maxRetries = maxRetries < 1 ? 1 : maxRetries
-
     if (attempts < maxRetries) {
       ++attempts
 
@@ -74,7 +95,7 @@ export class WhatsAppService implements IConnectionComponent {
     return false
   }
 
-  async createSession(sessionId: string, isLegacy: boolean): Promise<any> {
+  async createSession (sessionId: string, isLegacy: boolean): Promise<any> {
     await this.connectQueueServer();
 
     const sessionFile = (isLegacy ? 'legacy_' : 'md_') + sessionId + (isLegacy ? '.json' : '')
@@ -84,12 +105,11 @@ export class WhatsAppService implements IConnectionComponent {
 
     const { state, saveCreds } = await useMultiFileAuthState(this.sessionsDir(sessionFile))
 
-    const waConfig = {
+    const wa: WASocket = makeWASocket({
+      version: [2, 2323, 4],
       auth: state,
-      logger,
-    }
-
-    const wa: AnyWASocket = makeWASocket(waConfig)
+      logger
+    })
 
     if (!isLegacy) {
       store.readFromFile(this.sessionsDir(`${sessionId}_store.json`))
@@ -100,121 +120,102 @@ export class WhatsAppService implements IConnectionComponent {
 
     wa.ev.on('creds.update', saveCreds)
 
-    wa.ev.on('chats.set', ({ chats }) => {
+    wa.ev.on('chats.upsert', (chats) => {
       if (isLegacy) {
         store.chats.insertIfAbsent(...chats)
       }
     })
 
     wa.ev.on('connection.update', async (update) => {
-      const { connection, lastDisconnect } = update
+      if (update.qr) {
+        this.sessionWebSocket.emitSessionStatus(sessionId, { connection: "waiting" })
+        this.sessionWebSocket.emitQrCodeEvent(sessionId, await toDataURL(update.qr));
+      }
 
+      // Gets connection status
+      const { lastDisconnect, connection } = update;
+      if (connection) logger.info("Connection Status: ", connection)
+      let reason = new Boom(lastDisconnect?.error)?.output?.statusCode
+      // Handle reconnection
       if (connection === 'close') {
-        const shouldReconnect = (lastDisconnect.error as Boom)?.output?.statusCode !== DisconnectReason.loggedOut &&
-          (lastDisconnect.error as Boom)?.output?.statusCode !== DisconnectReason.connectionReplaced;
 
-        if (shouldReconnect) {
-          this.createSession(sessionId, false)
-          this.sessionWebSocket.emitSessionStatus({ connection: "reconnecting" });
+        if (reason === DisconnectReason.badSession) {
+          logger.error(`Bad Session, Please Delete /auth and Scan Again`)
+          this.sessionWebSocket.emitSessionStatus(sessionId, { connection: "disconnected" });
+          await client.set(sessionId + '-store', 'disconnected')
+        } else if (reason === DisconnectReason.connectionClosed) {
+          logger.warn("Connection closed, reconnecting....");
+          this.sessionWebSocket.emitSessionStatus(sessionId, { connection: "reconnecting" });
+          await this.createSession(sessionId, false)
+        } else if (reason === DisconnectReason.connectionLost) {
+          logger.warn("Connection Lost from Server, reconnecting...");
+          this.sessionWebSocket.emitSessionStatus(sessionId, { connection: "reconnecting" });
+          await this.createSession(sessionId, false)
+        } else if (reason === DisconnectReason.connectionReplaced) {
+          logger.error("Connection Replaced, Another New Session Opened, Please Close Current Session First");
+          this.sessionWebSocket.emitSessionStatus(sessionId, { connection: "disconnected" });
+        } else if (reason === DisconnectReason.loggedOut) {
+          logger.error(`Device Logged Out, Please Delete /auth and Scan Again.`)
+          this.sessionWebSocket.emitSessionStatus(sessionId, { connection: "disconnected" });
+
+          await client.set(sessionId + '-store', 'disconnected')
+        } else if (reason === DisconnectReason.restartRequired) {
+          logger.info("Restart Required, Restarting...");
+          this.sessionWebSocket.emitSessionStatus(sessionId, { connection: "reconnecting" });
+          await this.createSession(sessionId, false)
+        } else if (reason === DisconnectReason.timedOut) {
+          logger.warn("Connection TimedOut, Reconnecting...");
+          this.sessionWebSocket.emitSessionStatus(sessionId, { connection: "reconnecting" });
+          await this.createSession(sessionId, false)
+
+          await client.set(sessionId + '-store', 'reconnecting')
         } else {
-          this.sessionWebSocket.emitSessionStatus({ connection: "disconnected" });
-          this.deleteSession(sessionId);
+          logger.warn(`Unknown DisconnectReason: ${reason}: ${connection}`);
+          this.sessionWebSocket.emitSessionStatus(sessionId, { connection: "reconnecting" });
+          await this.createSession(sessionId, false)
         }
       } else if (connection === 'open') {
-        this.sessionWebSocket.emitSessionStatus({ connection: "connected" });
+        this.sessionWebSocket.emitSessionStatus(sessionId, { connection: "connected" });
+        logger.info('Opened connection');
+
+        await client.set(sessionId + '-store', 'connected')
       }
-      if (update.qr) {
-        this.sessionWebSocket.emitSessionStatus({ connection: "waiting" });
-        this.sessionWebSocket.emitQrCodeEvent(await toDataURL(update.qr));
-      }
+
     })
 
-    await lastValueFrom(this.httpService.post(`${process.env.WORKER_API_LOCATION}/worker/${sessionId}/start`));
+    // await lastValueFrom(this.httpService.post(`${process.env.WORKER_API_LOCATION}/worker/${sessionId}/start`));
     await this.queueConsumerMessages(sessionId);
     await this.listenMessages(sessionId);
   }
 
-  // async createSession(sessionId: string, isLegacy = false) {
-
-  //   await this.connectQueueServer();
-
-  //   const sessionFile = (isLegacy ? 'legacy_' : 'md_') + sessionId + (isLegacy ? '.json' : '')
-
-  //   const logger = pino({ level: 'warn' })
-  //   const store = makeInMemoryStore({ logger })
-
-  //   const { state, saveCreds } = await useMultiFileAuthState(this.sessionsDir(sessionFile))
-
-  //   const waConfig = {
-  //     auth: state,
-  //     logger,
-  //   }
-
-  //   const wa: AnyWASocket = makeWASocket(waConfig)
-
-  //   if (!isLegacy) {
-  //     store.readFromFile(this.sessionsDir(`${sessionId}_store.json`))
-  //     store.bind(wa.ev)
-  //   }
-
-  //   sessions.set(sessionId, { ...wa, store, isLegacy })
-
-  //   wa.ev.on('creds.update', saveCreds)
-
-  //   wa.ev.on('chats.set', ({ chats }) => {
-  //     if (isLegacy) {
-  //       store.chats.insertIfAbsent(...chats)
-  //     }
-  //   })
-
-  //   wa.ev.on('connection.update', async (update) => {
-  //     const { connection, lastDisconnect } = update
-
-  //     if (connection === 'close') {
-  //       const shouldReconnect = (lastDisconnect.error as Boom)?.output?.statusCode !== DisconnectReason.loggedOut &&
-  //         (lastDisconnect.error as Boom)?.output?.statusCode !== DisconnectReason.connectionReplaced;
-
-  //       if (shouldReconnect) {
-  //         this.createSession(sessionId, false)
-  //         this.sessionWebSocket.emitSessionStatus({ connection: "reconnecting" });
-  //       } else {
-  //         this.sessionWebSocket.emitSessionStatus({ connection: "disconnected" });
-  //         this.deleteSession(sessionId);
-  //       }
-  //     } else if (connection === 'open') {
-  //       this.sessionWebSocket.emitSessionStatus({ connection: "connected" });
-  //     }
-  //     if (update.qr) {
-  //       this.sessionWebSocket.emitSessionStatus({ connection: "waiting" });
-  //       this.sessionWebSocket.emitQrCodeEvent(await toDataURL(update.qr));
-  //     }
-  //   })
-
-  //   await lastValueFrom(this.httpService.post(`${process.env.WORKER_API_LOCATION}/worker/${sessionId}/start`));
-  //   await this.queueConsumerMessages(sessionId);
-  //   await this.listenMessages(sessionId);
-       
-  // }
-
-  async listenMessages(sessionId: string) {
+  async listenMessages (sessionId: string) {
 
     const wa: WASocket = sessions.get(sessionId);
 
     wa.ev.on('messages.upsert', async (m) => {
       const message = m.messages[0]
       if (m.type === 'notify') {
-        this.messageWebSocket.emitOnMessage(message);
+        this.messageWebSocket.emitOnMessage(sessionId, message);
         await this.publishQueue(sessionId, message)
-        // await wa.sendReadReceipt(message.key.remoteJid, message.key.participant, [message.key.id])
+        //await wa.sendReadReceipt(message.key.remoteJid, message.key.participant, [message.key.id])
       }
     })
   }
 
-  getSession(sessionId: string | null) {
+  async status (sessionId) {
+    let statusConn = await client.get(sessionId + '-store')
+
+		if (!statusConn)
+			return response(httpStatus.NotFound, false, '', { status: "disconnected" })
+
+		return response(httpStatus.Ok, true, '', { status: statusConn })
+	}
+
+  getSession (sessionId: string | null) {
     return sessions.get(sessionId) ?? null
   }
 
-  deleteSession(sessionId: string, isLegacy = false) {
+  async deleteSession (sessionId: string, isLegacy = false) {
     const sessionFile = (isLegacy ? 'legacy_' : 'md_') + sessionId + (isLegacy ? '.json' : '')
     const storeFile = `${sessionId}_store.json`
     const rmOptions = { force: true, recursive: true }
@@ -222,11 +223,13 @@ export class WhatsAppService implements IConnectionComponent {
     rmSync(this.sessionsDir(sessionFile), rmOptions)
     rmSync(this.sessionsDir(storeFile), rmOptions)
 
+
+    await client.del(sessionId + '-store')
     sessions.delete(sessionId)
     retries.delete(sessionId)
   }
 
-  getChatList(sessionId, isGroup = false) {
+  getChatList (sessionId, isGroup = false) {
     const filter = isGroup ? '@g.us' : '@s.whatsapp.net'
 
     return this.getSession(sessionId).store.chats.filter((chat) => {
@@ -234,7 +237,7 @@ export class WhatsAppService implements IConnectionComponent {
     })
   }
 
-  async isExists(session: WASocket, jid: string, isGroup = false) {
+  async isExists (session: WASocket, jid: string, isGroup = false) {
     try {
       let result;
 
@@ -252,7 +255,7 @@ export class WhatsAppService implements IConnectionComponent {
     }
   }
 
-  async sendMessage(session: WASocket, receiver: string, message: AnyMessageContent, delayMs = 1000) {
+  async sendMessage (sessionId: string, session: WASocket, receiver: string, message: AnyMessageContent, delayMs = 1000) {
     if (!session)
       return response(httpStatus.Unauthorized, false, 'disconnected')
 
@@ -261,7 +264,7 @@ export class WhatsAppService implements IConnectionComponent {
 
       let sendedMessage = await session.sendMessage(receiver, message)
 
-      this.messageWebSocket.emitOnMessage(sendedMessage);
+      this.messageWebSocket.emitOnMessage(sessionId, sendedMessage);
 
       return sendedMessage;
     } catch (ex) {
@@ -269,7 +272,7 @@ export class WhatsAppService implements IConnectionComponent {
     }
   }
 
-  formatPhone(phone: string) {
+  formatPhone (phone: string) {
     if (phone.endsWith('@s.whatsapp.net')) {
       return phone
     }
@@ -279,7 +282,7 @@ export class WhatsAppService implements IConnectionComponent {
     return (formatted += '@s.whatsapp.net')
   }
 
-  formatGroup(group: string) {
+  formatGroup (group: string) {
     if (group.endsWith('@g.us')) {
       return group
     }
@@ -289,7 +292,7 @@ export class WhatsAppService implements IConnectionComponent {
     return (formatted += '@g.us')
   }
 
-  cleanup() {
+  cleanup () {
     console.log('Running cleanup before exit.')
 
     sessions.forEach((session, sessionId) => {
@@ -299,7 +302,7 @@ export class WhatsAppService implements IConnectionComponent {
     })
   }
 
-  init() {
+  init () {
     readdir(this.sessionsDir(), (err, files) => {
       if (err) {
         throw err
@@ -319,9 +322,12 @@ export class WhatsAppService implements IConnectionComponent {
     })
   }
 
-  async publishQueue(sessionId: string, data: any) {
-    console.log('mensagem publicada whatsapp');
-    
+  async publishQueue (sessionId: string, data: any) {
+    // is message group
+    if (data.key.remoteJid.includes('@g.us') || data.key.fromMe ) return
+
+    console.log('mensagem publicada whatsapp', data);
+
     let messageInfo = {
       remoteJid: data.key.remoteJid,
       fromJid: sessionId,
@@ -351,16 +357,16 @@ export class WhatsAppService implements IConnectionComponent {
     );
   }
 
-  async connectQueueServer() {
+  async connectQueueServer () {
     await queue.connectToServer();
   }
 
-  async queueConsumerMessages(sessionId: string) {
+  async queueConsumerMessages (sessionId: string) {
 
 
-    await queue.consume(`sendMessage_${sessionId}`, async sendMessage => {   
+    await queue.consume(`sendMessage_${sessionId}`, async sendMessage => {
       console.log('mensagem consumida whatsapp');
-         
+
       let data = this.parseMessageQueue(sendMessage.content.toString());
 
       if (!this.isSessionExists(data.sessionId)) {
@@ -371,11 +377,11 @@ export class WhatsAppService implements IConnectionComponent {
       const wa: WASocket = sessions.get(data.sessionId);
       const jid = this.formatPhone(data.receiver);
 
-      await this.sendMessage(wa, jid, data.message, data.delayMs ? data.delayMs : 1000)
+      await this.sendMessage(data.sessionId, wa, jid, data.message, data.delayMs ? data.delayMs : 1000)
     })
   }
 
-  parseMessageQueue(data: string) {
+  parseMessageQueue (data: string) {
     return JSON.parse(data);
   }
 }
