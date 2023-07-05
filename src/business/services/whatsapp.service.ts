@@ -86,7 +86,7 @@ export class WhatsAppService implements IConnectionComponent {
     if (attempts < maxRetries) {
       ++attempts
 
-      console.log('Reconnecting...', { attempts, sessionId })
+      console.log('emit qr code...', { attempts, sessionId })
       retries.set(sessionId, attempts)
 
       return true
@@ -125,11 +125,17 @@ export class WhatsAppService implements IConnectionComponent {
         store.chats.insertIfAbsent(...chats)
       }
     })
-
     wa.ev.on('connection.update', async (update) => {
       if (update.qr) {
-        this.sessionWebSocket.emitSessionStatus(sessionId, { connection: "waiting" })
-        this.sessionWebSocket.emitQrCodeEvent(sessionId, await toDataURL(update.qr));
+        if (this.shouldReconnect(sessionId)) {
+          this.sessionWebSocket.emitSessionStatus(sessionId, { connection: "waiting" })
+          this.sessionWebSocket.emitQrCodeEvent(sessionId, await toDataURL(update.qr));
+        } else {
+          this.sessionWebSocket.emitSessionStatus(sessionId, { connection: "try again" })
+          wa.ev.removeAllListeners('connection.update')
+          retries.delete(sessionId)
+          console.log('qr code timeout');
+        }
       }
 
       // Gets connection status
@@ -182,7 +188,6 @@ export class WhatsAppService implements IConnectionComponent {
       }
 
     })
-
     // await lastValueFrom(this.httpService.post(`${process.env.WORKER_API_LOCATION}/worker/${sessionId}/start`));
     await this.queueConsumerMessages(sessionId);
     await this.listenMessages(sessionId);
@@ -194,7 +199,8 @@ export class WhatsAppService implements IConnectionComponent {
 
     wa.ev.on('messages.upsert', async (m) => {
       const message = m.messages[0]
-      if (m.type === 'notify') {
+
+      if (m.type === 'notify' && message.key.remoteJid.includes('@g.us') || message.key.fromMe) {
         this.messageWebSocket.emitOnMessage(sessionId, message);
         await this.publishQueue(sessionId, message)
         //await wa.sendReadReceipt(message.key.remoteJid, message.key.participant, [message.key.id])
@@ -323,11 +329,6 @@ export class WhatsAppService implements IConnectionComponent {
   }
 
   async publishQueue (sessionId: string, data: any) {
-    // is message group
-    if (data.key.remoteJid.includes('@g.us') || data.key.fromMe ) return
-
-    console.log('mensagem publicada whatsapp', data);
-
     let messageInfo = {
       remoteJid: data.key.remoteJid,
       fromJid: sessionId,
