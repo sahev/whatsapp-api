@@ -15,4 +15,6 @@ COPY . .
 
 RUN npm run build
 
+EXPOSE 4040 4141 4242
+
 CMD node dist/main.js
