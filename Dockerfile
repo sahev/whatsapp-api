@@ -15,6 +15,4 @@ COPY . .
 
 RUN npm run build
 
-EXPOSE 4040
-
-CMD ['node', 'dist/main']
+CMD ['node', 'dist/main.js']
