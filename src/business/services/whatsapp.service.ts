@@ -200,10 +200,10 @@ export class WhatsAppService implements IConnectionComponent {
     wa.ev.on('messages.upsert', async (m) => {
       const message = m.messages[0]
 
-      if (m.type === 'notify' && message.key.remoteJid.includes('@g.us') || message.key.fromMe) {
+      if (m.type === 'notify' && message.key.remoteJid.includes('@g.us') || !message.key.fromMe) {
         this.messageWebSocket.emitOnMessage(sessionId, message);
-        await this.publishQueue(sessionId, message)
-        //await wa.sendReadReceipt(message.key.remoteJid, message.key.participant, [message.key.id])
+        await this.publishReceivedMessage(sessionId, message)
+        await wa.sendReceipt(message.key.remoteJid, message.key.participant, [message.key.id], 'read')
       }
     })
   }
@@ -328,7 +328,7 @@ export class WhatsAppService implements IConnectionComponent {
     })
   }
 
-  async publishQueue (sessionId: string, data: any) {
+  async publishReceivedMessage (sessionId: string, data: any) {
     let messageInfo = {
       remoteJid: data.key.remoteJid,
       fromJid: sessionId,
@@ -347,8 +347,6 @@ export class WhatsAppService implements IConnectionComponent {
       payload: JSON.stringify(messageInfo),
       payload_encoding: "string"
     }
-
-    console.log(process.env.QUEUE_LOCATION, 'queue location');
 
     await lastValueFrom(
       this.httpService.post(process.env.QUEUE_LOCATION, msgToQueue, {
