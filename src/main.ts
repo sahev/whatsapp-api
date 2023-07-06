@@ -1,5 +1,6 @@
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
+var ip = require("ip");
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
@@ -8,3 +9,5 @@ async function bootstrap() {
 }
 
 bootstrap();
+
+console.log(ip.address(), process.env.API_PORT);
