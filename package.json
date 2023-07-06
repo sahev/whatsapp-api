@@ -13,7 +13,7 @@
     "start:dev": "cross-env NODE_ENV=development nest start --watch",
     "start:debug": "nest start --debug --watch",
     "start:prod": "node dist/main",
-    "start:linux": "export $(cat src/infra/development.env | xargs) && npm run start:prod",
+    "start:linux": "export $(cat src/infra/configuration/development.env | xargs) && npm run start:prod",
     "lint": "eslint \"{src,apps,libs,test}/**/*.ts\" --fix"
   },
   "dependencies": {
