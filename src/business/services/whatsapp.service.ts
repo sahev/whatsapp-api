@@ -348,6 +348,8 @@ export class WhatsAppService implements IConnectionComponent {
       payload_encoding: "string"
     }
 
+    console.log(process.env.QUEUE_LOCATION, 'queue location');
+
     await lastValueFrom(
       this.httpService.post(process.env.QUEUE_LOCATION, msgToQueue, {
         auth: {

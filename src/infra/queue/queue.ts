@@ -19,7 +19,7 @@ export class QueueService {
   async start(): Promise<void> {
     this.conn = await connect(process.env.QUEUE_CONSUMER_LOCATION);
     this.channel = await this.conn.createChannel();
-    console.log('queue thread connected');
+    console.log('queue thread connected: ', process.env.QUEUE_CONSUMER_LOCATION);
   }
 
   async consume(queue: string, callback: (message: Message) => void) {
